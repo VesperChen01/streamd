@@ -31,19 +31,19 @@ def run_gbsa_task(wdir, tpr, xtc, topol, index, mmpbsa, np, ligand_resid, append
     def calc_gbsa(wdir, tpr, xtc, topol, index, mmpbsa, np, protein_index,
                   ligand_index, unique_id, env, bash_log):
         output = os.path.join(wdir, f"FINAL_RESULTS_MMPBSA_{unique_id}.dat")
+        decomposition_output = os.path.join(wdir, f"FINAL_RESULTS_MMPBSA_{unique_id}_decomposition.csv")
         with tempfile.TemporaryDirectory(dir=wdir) as tmpdirname:
             logging.info(f'tmp intermediate dir: {tmpdirname}')
             cmd = f'cd {tmpdirname}; mpirun -np {np} gmx_MMPBSA MPI -O -i {mmpbsa} ' \
-                  f' -cs {tpr} -ci {index} -cg {protein_index} {ligand_index} -ct {xtc} -cp {topol} -nogui ' \
-                  f'-o {output} ' \
-                  f'-eo {os.path.join(wdir, f"FINAL_RESULTS_MMPBSA_{unique_id}.csv")}' \
-                  f' >> {os.path.join(wdir, bash_log)} 2>&1'
-
+                f' -cs {tpr} -ci {index} -cg {protein_index} {ligand_index} -ct {xtc} -cp {topol} -nogui ' \
+                f'-o {output} ' \
+                f'-eo {os.path.join(wdir, f"FINAL_RESULTS_MMPBSA_{unique_id}.csv")} ' \
+                f'-deo {decomposition_output} ' \
+                f'>> {os.path.join(wdir, bash_log)} 2>&1'
             if not run_check_subprocess(cmd, key=xtc, log=os.path.join(wdir, bash_log), env=env):
                 run_check_subprocess(f'ls {tmpdirname}', key=tmpdirname, log=os.path.join(wdir, bash_log), env=env)
                 return None
-
-        return output
+        return output, decomposition_output
 
     if clean_previous:
         clean_temporary_gmxMMBPSA_files(wdir)
@@ -79,17 +79,19 @@ def run_gbsa_task(wdir, tpr, xtc, topol, index, mmpbsa, np, ligand_resid, append
 
     ligand_index = index_list.index(ligand_resid)
 
-    output = calc_gbsa(wdir=wdir, tpr=tpr, xtc=xtc, topol=topol,
-                       index=index, mmpbsa=mmpbsa,
-                       np=np, protein_index=protein_index,
-                       ligand_index=ligand_index,
-                       unique_id=unique_id,
-                       env=env,
-                       bash_log=bash_log)
-
+    output, decomposition_output = calc_gbsa(wdir=wdir, tpr=tpr, xtc=xtc, topol=topol,
+                                             index=index, mmpbsa=mmpbsa,
+                                             np=np, protein_index=protein_index,
+                                             ligand_index=ligand_index,
+                                             unique_id=unique_id,
+                                             env=env,
+                                             bash_log=bash_log)
+    if decomposition_output and os.path.isfile(decomposition_output):
+        logging.info(f"Decomposition output saved to {decomposition_output}")
+    else:
+        logging.warning("No decomposition output found.")
     if os.path.isfile(os.path.join(wdir, 'gmx_MMPBSA.log')):
         shutil.copy(os.path.join(wdir, 'gmx_MMPBSA.log'), os.path.join(wdir, f'gmx_MMPBSA_{unique_id}.log'))
-
     return output
 
 
@@ -316,7 +318,16 @@ def start(wdir_to_run, tpr, xtc, topol, index, out_wdir, mmpbsa, ncpu, ligand_re
         logging.info(
             f'gmxMMPBSA energy calculation of {len(var_gbsa_out_files)} were successfully finished.\n'
             f'Successfully finished complexes have been saved in {finished_complexes_file} file')
-
+        # collect decomposition_files
+        decomposition_files = [
+            os.path.join(os.path.dirname(out_file), os.path.basename(out_file).replace(".dat", "_decomposition.csv"))
+            for out_file in var_gbsa_out_files
+        ]
+        for decomp_file in decomposition_files:
+            if os.path.isfile(decomp_file):
+                logging.info(f"Decomposition result found: {decomp_file}")
+            else:
+                logging.warning(f"No decomposition result found for: {decomp_file}")
 
 def main():
     parser = argparse.ArgumentParser(description='''Run MM-GBSA/MM-PBSA calculation using gmx_MMPBSA tool''')
